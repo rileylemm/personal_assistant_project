@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, Callable, List, Optional
 import sys
 import signal
+import time
 
 # Add parent directory to path to import config
 import os
@@ -25,17 +26,55 @@ class EventBus:
     """
     def __init__(self):
         """Initialize the Redis connection for the event bus."""
-        self.redis_client = redis.Redis(
-            host=Config.REDIS.HOST,
-            port=Config.REDIS.PORT,
-            db=Config.REDIS.DB,
-            decode_responses=True  # Automatically decode to strings
-        )
-        self.pubsub = self.redis_client.pubsub()
+        self.redis_client = None
+        self.pubsub = None
         self.channels = Config.REDIS.CHANNELS
         self.subscribers = {}
         self.running = False
         self.listener_thread = None
+        self.connect_to_redis()
+    
+    def connect_to_redis(self):
+        """Connect to Redis with retry logic"""
+        max_retries = 5
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Connecting to Redis (attempt {attempt+1}/{max_retries})...")
+                self.redis_client = redis.Redis(
+                    host=Config.REDIS.HOST,
+                    port=Config.REDIS.PORT,
+                    db=Config.REDIS.DB,
+                    decode_responses=True,  # Automatically decode to strings
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True
+                )
+                # Test the connection
+                self.redis_client.ping()
+                
+                # Initialize pubsub
+                self.pubsub = self.redis_client.pubsub()
+                
+                logger.info("Successfully connected to Redis")
+                return True
+            except redis.ConnectionError as e:
+                logger.error(f"Redis connection error (attempt {attempt+1}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to Redis: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+        
+        logger.error(f"Failed to connect to Redis after {max_retries} attempts")
+        # Initialize a dummy Redis client for graceful degradation
+        self.redis_client = DummyRedisClient()
+        self.pubsub = DummyPubSub()
+        return False
     
     def publish(self, event_type: str, data: Dict[str, Any]) -> bool:
         """
@@ -54,6 +93,10 @@ class EventBus:
         
         channel = self.channels[event_type]
         try:
+            # Check connection and reconnect if needed
+            if not self._ensure_connection():
+                return False
+                
             # Convert data to JSON string
             message = json.dumps(data)
             self.redis_client.publish(channel, message)
@@ -75,6 +118,10 @@ class EventBus:
             bool: True if subscribed successfully, False otherwise
         """
         try:
+            # Check connection and reconnect if needed
+            if not self._ensure_connection():
+                return False
+                
             channels_to_subscribe = []
             for event_type in event_types:
                 if event_type not in self.channels:
@@ -89,11 +136,29 @@ class EventBus:
                 self.subscribers[channel].append(callback)
             
             # Subscribe to the channels
-            self.pubsub.subscribe(*channels_to_subscribe)
-            logger.info(f"Subscribed to channels: {channels_to_subscribe}")
+            if channels_to_subscribe:
+                self.pubsub.subscribe(*channels_to_subscribe)
+                logger.info(f"Subscribed to channels: {channels_to_subscribe}")
             return True
         except Exception as e:
             logger.error(f"Failed to subscribe to events: {str(e)}")
+            return False
+    
+    def _ensure_connection(self) -> bool:
+        """Ensure Redis connection is active, reconnect if needed"""
+        try:
+            if isinstance(self.redis_client, DummyRedisClient):
+                # Try to reconnect if we're using the dummy client
+                return self.connect_to_redis()
+                
+            # Ping to check connection
+            self.redis_client.ping()
+            return True
+        except (redis.ConnectionError, redis.TimeoutError):
+            logger.warning("Redis connection lost, attempting to reconnect...")
+            return self.connect_to_redis()
+        except Exception as e:
+            logger.error(f"Unexpected Redis error: {str(e)}")
             return False
     
     def start_listening(self) -> None:
@@ -121,8 +186,20 @@ class EventBus:
     
     def _listen_for_events(self) -> None:
         """Background thread function that listens for events."""
+        reconnect_delay = 1  # Initial reconnect delay in seconds
+        max_reconnect_delay = 30  # Maximum reconnect delay
+        
         while self.running:
             try:
+                if not self._ensure_connection():
+                    logger.warning("Redis connection unavailable, retrying in {reconnect_delay}s...")
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)  # Exponential backoff
+                    continue
+                
+                # Reset reconnect delay on successful connection
+                reconnect_delay = 1
+                
                 message = self.pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message is not None:
                     channel = message['channel']
@@ -141,11 +218,62 @@ class EventBus:
                                 callback(event_type, data)
                             except Exception as e:
                                 logger.error(f"Error in event handler for {channel}: {str(e)}")
+            except redis.RedisError as e:
+                logger.error(f"Redis error in event listener: {str(e)}")
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
             except Exception as e:
                 logger.error(f"Error in event listener: {str(e)}")
                 # Brief pause to prevent CPU spinning on continuous errors
-                import time
                 time.sleep(0.1)
+
+
+class DummyRedisClient:
+    """Dummy Redis client for graceful degradation when Redis is unavailable"""
+    def __init__(self):
+        self.data = {}
+        logger.warning("Using DummyRedisClient - Redis functionality will be limited")
+    
+    def publish(self, channel, message):
+        logger.debug(f"DummyRedisClient: Would publish to {channel}: {message}")
+        return 0
+    
+    def set(self, key, value):
+        self.data[key] = value
+        logger.debug(f"DummyRedisClient: Set {key}")
+        return True
+    
+    def get(self, key):
+        value = self.data.get(key)
+        logger.debug(f"DummyRedisClient: Get {key}")
+        return value
+    
+    def keys(self, pattern):
+        # Very basic pattern matching, just for document:*:events
+        if pattern == 'document:*:events':
+            return [k for k in self.data.keys() if k.startswith('document:') and k.endswith(':events')]
+        return []
+    
+    def ping(self):
+        return True
+    
+    def pubsub(self):
+        return DummyPubSub()
+
+
+class DummyPubSub:
+    """Dummy PubSub for graceful degradation when Redis is unavailable"""
+    def __init__(self):
+        logger.warning("Using DummyPubSub - Subscription functionality will be limited")
+    
+    def subscribe(self, *channels):
+        logger.debug(f"DummyPubSub: Would subscribe to {channels}")
+        pass
+    
+    def get_message(self, ignore_subscribe_messages=True, timeout=1.0):
+        time.sleep(0.1)  # To prevent CPU spinning
+        return None
+
 
 # Singleton instance
 _event_bus_instance = None

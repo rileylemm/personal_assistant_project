@@ -7,7 +7,7 @@ services:
       - "6333:6333" # REST API
       - "6334:6334" # gRPC
     volumes:
-      - ./qdrant_data:/qdrant/storage
+      - qdrant_data:/qdrant/storage
     restart: unless-stopped
     environment:
       - QDRANT_ALLOW_CORS=true
@@ -23,7 +23,7 @@ services:
       - "7474:7474" # Browser interface
       - "7687:7687" # Bolt protocol
     volumes:
-      - ./neo4j_data:/data
+      - neo4j_data:/data
     restart: unless-stopped
     environment:
       - NEO4J_AUTH=neo4j/password
@@ -35,3 +35,22 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  qdrant_data:
+  neo4j_data:
+  redis_data:

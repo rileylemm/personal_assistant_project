@@ -30,8 +30,27 @@ bp = Blueprint('main', __name__)
 # Event bus instance
 event_bus = get_event_bus()
 
-# Event tracking for SSE
+# Get Redis client from event bus
+redis_client = event_bus.redis_client
+
+# Event tracking for SSE (cache in memory for performance, but backed by Redis)
 document_events = {}
+
+# Load existing document events from Redis on startup
+def load_document_events_from_redis():
+    try:
+        # Get all document keys
+        document_keys = redis_client.keys('document:*:events')
+        
+        for key in document_keys:
+            document_id = key.split(':')[1]
+            events_json = redis_client.get(key)
+            
+            if events_json:
+                document_events[document_id] = json.loads(events_json)
+                logger.info(f"Loaded {len(document_events[document_id])} events for document {document_id} from Redis")
+    except Exception as e:
+        logger.error(f"Error loading document events from Redis: {str(e)}")
 
 # Event listener for SSE updates
 def setup_event_listeners():
@@ -40,15 +59,28 @@ def setup_event_listeners():
         if document_id:
             if document_id not in document_events:
                 document_events[document_id] = []
-            # Add event to document events
-            document_events[document_id].append({
+            
+            # Create new event
+            new_event = {
                 'type': event_type,
                 'data': data,
                 'timestamp': data.get('timestamp', datetime.now().isoformat())
-            })
+            }
+            
+            # Add event to document events (in-memory cache)
+            document_events[document_id].append(new_event)
+            
             # Limit the number of events stored
             if len(document_events[document_id]) > 100:
                 document_events[document_id] = document_events[document_id][-100:]
+            
+            # Store events in Redis for persistence
+            try:
+                redis_key = f"document:{document_id}:events"
+                redis_client.set(redis_key, json.dumps(document_events[document_id]))
+                logger.debug(f"Stored events for document {document_id} in Redis")
+            except Exception as e:
+                logger.error(f"Error storing document events in Redis: {str(e)}")
     
     # Subscribe to all relevant events
     event_bus.subscribe([
@@ -64,17 +96,24 @@ def setup_event_listeners():
     event_bus.start_listening()
     logger.info("Event listeners set up for SSE")
 
-# Start event listeners in a background thread to avoid blocking
-Thread(target=setup_event_listeners, daemon=True).start()
+# Initialize event listeners and load existing events
+def init_app_events():
+    # Load existing events from Redis
+    load_document_events_from_redis()
+    
+    # Set up event listeners
+    setup_event_listeners()
 
+# Helper functions
 def allowed_file(filename):
-    """Check if the file extension is allowed."""
+    """Check if file extension is allowed."""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in Config.FLASK.ALLOWED_EXTENSIONS
 
+# Routes
 @bp.route('/')
 def index():
-    """Home page / upload form."""
+    """Main page with file upload."""
     return render_template('index.html')
 
 @bp.route('/upload', methods=['POST'])
@@ -197,6 +236,9 @@ def api_document_events(document_id):
 @bp.route('/documents')
 def document_list():
     """List all processed documents."""
+    # Ensure we have the latest documents from Redis
+    load_document_events_from_redis()
+    
     # Collect all document IDs we have events for
     all_documents = []
     

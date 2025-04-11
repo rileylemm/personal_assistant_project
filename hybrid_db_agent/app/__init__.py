@@ -33,4 +33,8 @@ def create_app(test_config=None):
     from . import routes
     app.register_blueprint(routes.bp)
     
+    # Initialize Redis event system
+    with app.app_context():
+        routes.init_app_events()
+    
     return app 
