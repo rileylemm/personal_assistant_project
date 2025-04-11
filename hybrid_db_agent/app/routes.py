@@ -112,22 +112,32 @@ def allowed_file(filename):
 
 # Routes
 @bp.route('/')
-def index():
-    """Main page with file upload."""
+def home():
+    """Home page."""
+    return render_template('home.html')
+
+@bp.route('/upload')
+def upload():
+    """Upload document page."""
     return render_template('index.html')
 
-@bp.route('/upload', methods=['POST'])
+@bp.route('/query')
+def query():
+    """Query document page."""
+    return render_template('query.html')
+
+@bp.route('/upload-file', methods=['POST'])
 def upload_file():
     """Handle document upload."""
     if 'file' not in request.files:
         flash('No file part')
-        return redirect(request.url)
+        return redirect(url_for('main.upload'))
     
     file = request.files['file']
     
     if file.filename == '':
         flash('No selected file')
-        return redirect(request.url)
+        return redirect(url_for('main.upload'))
     
     if file and allowed_file(file.filename):
         # Secure the filename
@@ -161,7 +171,7 @@ def upload_file():
         return redirect(url_for('main.document_status', document_id=document_id))
     
     flash('File type not allowed. Please upload a markdown (.md) file.')
-    return redirect(url_for('main.index'))
+    return redirect(url_for('main.upload'))
 
 @bp.route('/status/<document_id>')
 def document_status(document_id):
@@ -169,7 +179,7 @@ def document_status(document_id):
     # Check if document exists
     if document_id not in document_events and not os.path.exists(os.path.join(Config.FLASK.UPLOAD_FOLDER, document_id)):
         flash('Document not found')
-        return redirect(url_for('main.index'))
+        return redirect(url_for('main.upload'))
     
     return render_template('status.html', document_id=document_id)
 

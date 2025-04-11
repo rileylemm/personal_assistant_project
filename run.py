@@ -39,7 +39,7 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run the Hybrid Document Database application')
     parser.add_argument('--host', default='127.0.0.1', help='Host to run the Flask app on')
-    parser.add_argument('--port', type=int, default=5000, help='Port to run the Flask app on')
+    parser.add_argument('--port', type=int, default=5001, help='Port to run the Flask app on')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
     parser.add_argument('--no-worker', action='store_true', help='Do not start the worker process')
     args = parser.parse_args()
