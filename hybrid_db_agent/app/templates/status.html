@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Processing Status</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            background-color: #f8f9fa;
+        }
+        .status-card {
+            background-color: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+            margin-bottom: 2rem;
+        }
+        .event-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .event-item {
+            padding: 15px;
+            border-left: 3px solid #dee2e6;
+            margin-bottom: 10px;
+            background-color: #f8f9fa;
+            position: relative;
+        }
+        .event-item::before {
+            content: '';
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #0d6efd;
+            left: -7px;
+            top: 20px;
+        }
+        .event-item.error::before {
+            background-color: #dc3545;
+        }
+        .event-item.completed::before {
+            background-color: #198754;
+        }
+        .progress-indicator {
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+        }
+        .progress-bar-container {
+            position: absolute;
+            width: 100%;
+            top: 10px;
+            z-index: 1;
+        }
+        .progress {
+            height: 4px;
+        }
+        .progress-step {
+            z-index: 2;
+            text-align: center;
+            position: relative;
+            padding-top: 25px;
+        }
+        .step-icon {
+            width: 25px;
+            height: 25px;
+            background-color: #e9ecef;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 10px;
+        }
+        .step-icon.active {
+            background-color: #0d6efd;
+            color: white;
+        }
+        .step-icon.completed {
+            background-color: #198754;
+            color: white;
+        }
+        .step-icon.error {
+            background-color: #dc3545;
+            color: white;
+        }
+        .step-text {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .step-text.active {
+            color: #0d6efd;
+            font-weight: bold;
+        }
+        .step-text.error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .step-text.completed {
+            color: #198754;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <h1 class="text-center mb-4">Document Processing Status</h1>
+                
+                {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                        {% for message in messages %}
+                            <div class="alert alert-danger mb-3">{{ message }}</div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+                
+                <div class="status-card">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 id="document-title">Processing Document</h2>
+                        <span class="badge" id="status-badge">Unknown</span>
+                    </div>
+                    
+                    <div class="progress-indicator">
+                        <div class="progress-bar-container">
+                            <div class="progress">
+                                <div class="progress-bar" id="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="progress-step">
+                            <div class="step-icon" id="step-upload">1</div>
+                            <div class="step-text">Upload</div>
+                        </div>
+                        
+                        <div class="progress-step">
+                            <div class="step-icon" id="step-chunk">2</div>
+                            <div class="step-text">Chunking</div>
+                        </div>
+                        
+                        <div class="progress-step">
+                            <div class="step-icon" id="step-embed">3</div>
+                            <div class="step-text">Embedding</div>
+                        </div>
+                        
+                        <div class="progress-step">
+                            <div class="step-icon" id="step-store">4</div>
+                            <div class="step-text">Storage</div>
+                        </div>
+                        
+                        <div class="progress-step">
+                            <div class="step-icon" id="step-complete">5</div>
+                            <div class="step-text">Complete</div>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5 class="mb-0">Processing Details</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Document ID:</strong> <span id="document-id">{{ document_id }}</span></p>
+                                    <p><strong>Filename:</strong> <span id="filename">Loading...</span></p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Uploaded At:</strong> <span id="uploaded-at">Loading...</span></p>
+                                    <p><strong>File Size:</strong> <span id="file-size">Loading...</span></p>
+                                </div>
+                            </div>
+                            <div class="row" id="processing-stats" style="display: none;">
+                                <div class="col-md-12">
+                                    <hr>
+                                    <h6>Processing Statistics</h6>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Chunks Created:</strong> <span id="chunk-count">-</span></p>
+                                    <p><strong>Embeddings Generated:</strong> <span id="embedding-count">-</span></p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Processing Time:</strong> <span id="processing-time">-</span></p>
+                                    <p><strong>Status:</strong> <span id="status-text">-</span></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h5 class="mb-3">Event Timeline</h5>
+                    <div class="event-list" id="event-list">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-3">Waiting for events...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-left me-2" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                        </svg>
+                        Back to Upload
+                    </a>
+                    <a href="{{ url_for('main.document_list') }}" class="btn btn-outline-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-list-ul me-2" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zm-3 1a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm0 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm0 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
+                        </svg>
+                        View All Documents
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const documentId = document.getElementById('document-id').textContent;
+            let eventSource;
+            
+            // Function to format date
+            function formatDate(dateString) {
+                const date = new Date(dateString);
+                return date.toLocaleString();
+            }
+            
+            // Function to format file size
+            function formatFileSize(bytes) {
+                if (bytes < 1024) return bytes + ' bytes';
+                else if (bytes < 1048576) return (bytes / 1024).toFixed(2) + ' KB';
+                else return (bytes / 1048576).toFixed(2) + ' MB';
+            }
+            
+            // Update the progress UI based on status
+            function updateProgress(status) {
+                // Reset all steps
+                document.querySelectorAll('.step-icon').forEach(icon => {
+                    icon.classList.remove('active', 'completed', 'error');
+                });
+                document.querySelectorAll('.step-text').forEach(text => {
+                    text.classList.remove('active', 'completed', 'error');
+                });
+                
+                // Update progress bar
+                const progressBar = document.getElementById('progress-bar');
+                const statusBadge = document.getElementById('status-badge');
+                
+                // Set badge color
+                statusBadge.className = 'badge';
+                
+                let progressPercent = 0;
+                
+                switch(status) {
+                    case 'Uploaded':
+                        progressPercent = 20;
+                        statusBadge.classList.add('bg-info');
+                        document.getElementById('step-upload').classList.add('active');
+                        document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('active');
+                        break;
+                    case 'Chunking':
+                        progressPercent = 40;
+                        statusBadge.classList.add('bg-info');
+                        document.getElementById('step-upload').classList.add('completed');
+                        document.getElementById('step-chunk').classList.add('active');
+                        document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-chunk').parentElement.querySelector('.step-text').classList.add('active');
+                        break;
+                    case 'Embedding':
+                        progressPercent = 60;
+                        statusBadge.classList.add('bg-info');
+                        document.getElementById('step-upload').classList.add('completed');
+                        document.getElementById('step-chunk').classList.add('completed');
+                        document.getElementById('step-embed').classList.add('active');
+                        document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-chunk').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-embed').parentElement.querySelector('.step-text').classList.add('active');
+                        break;
+                    case 'Storing':
+                        progressPercent = 80;
+                        statusBadge.classList.add('bg-info');
+                        document.getElementById('step-upload').classList.add('completed');
+                        document.getElementById('step-chunk').classList.add('completed');
+                        document.getElementById('step-embed').classList.add('completed');
+                        document.getElementById('step-store').classList.add('active');
+                        document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-chunk').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-embed').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-store').parentElement.querySelector('.step-text').classList.add('active');
+                        break;
+                    case 'Completed':
+                        progressPercent = 100;
+                        statusBadge.classList.add('bg-success');
+                        document.getElementById('step-upload').classList.add('completed');
+                        document.getElementById('step-chunk').classList.add('completed');
+                        document.getElementById('step-embed').classList.add('completed');
+                        document.getElementById('step-store').classList.add('completed');
+                        document.getElementById('step-complete').classList.add('completed');
+                        document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-chunk').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-embed').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-store').parentElement.querySelector('.step-text').classList.add('completed');
+                        document.getElementById('step-complete').parentElement.querySelector('.step-text').classList.add('completed');
+                        break;
+                    case 'Error':
+                        statusBadge.classList.add('bg-danger');
+                        // Mark all completed steps
+                        let errorFound = false;
+                        if (document.getElementById('step-upload').classList.contains('active')) {
+                            document.getElementById('step-upload').classList.remove('active');
+                            document.getElementById('step-upload').classList.add('error');
+                            document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('error');
+                            errorFound = true;
+                        }
+                        if (!errorFound && document.getElementById('step-chunk').classList.contains('active')) {
+                            document.getElementById('step-chunk').classList.remove('active');
+                            document.getElementById('step-chunk').classList.add('error');
+                            document.getElementById('step-chunk').parentElement.querySelector('.step-text').classList.add('error');
+                            errorFound = true;
+                        }
+                        if (!errorFound && document.getElementById('step-embed').classList.contains('active')) {
+                            document.getElementById('step-embed').classList.remove('active');
+                            document.getElementById('step-embed').classList.add('error');
+                            document.getElementById('step-embed').parentElement.querySelector('.step-text').classList.add('error');
+                            errorFound = true;
+                        }
+                        if (!errorFound && document.getElementById('step-store').classList.contains('active')) {
+                            document.getElementById('step-store').classList.remove('active');
+                            document.getElementById('step-store').classList.add('error');
+                            document.getElementById('step-store').parentElement.querySelector('.step-text').classList.add('error');
+                            errorFound = true;
+                        }
+                        if (!errorFound) {
+                            document.getElementById('step-upload').classList.add('error');
+                            document.getElementById('step-upload').parentElement.querySelector('.step-text').classList.add('error');
+                        }
+                        break;
+                    default:
+                        progressPercent = 0;
+                        statusBadge.classList.add('bg-secondary');
+                }
+                
+                // Update progress bar and badge text
+                progressBar.style.width = progressPercent + '%';
+                statusBadge.textContent = status;
+            }
+            
+            // Fetch initial status
+            fetch(`/api/status/${documentId}`)
+                .then(response => response.json())
+                .then(data => {
+                    // Initialize UI with the current status
+                    updateProgress(data.status);
+                    
+                    // Update document details if available
+                    if (data.events.length) {
+                        // Find upload event for metadata
+                        const uploadEvent = data.events.find(event => event.type === 'document_uploaded');
+                        if (uploadEvent) {
+                            document.getElementById('filename').textContent = uploadEvent.data.filename || 'Unknown';
+                            document.getElementById('uploaded-at').textContent = formatDate(uploadEvent.data.uploaded_at) || 'Unknown';
+                            document.getElementById('file-size').textContent = formatFileSize(uploadEvent.data.file_size) || 'Unknown';
+                            document.getElementById('document-title').textContent = uploadEvent.data.filename || 'Processing Document';
+                        }
+                        
+                        // Clear waiting message and populate events
+                        const eventList = document.getElementById('event-list');
+                        eventList.innerHTML = '';
+                        
+                        // Add events to timeline
+                        data.events.forEach(event => {
+                            addEventToTimeline(event);
+                        });
+                        
+                        // Update processing stats if completed
+                        updateProcessingStats(data.events);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
+            
+            // Set up SSE for real-time updates
+            eventSource = new EventSource(`/api/events/${documentId}`);
+            
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.events && data.events.length) {
+                    // Process new events
+                    data.events.forEach(newEvent => {
+                        addEventToTimeline(newEvent);
+                    });
+                    
+                    // Re-fetch status to update UI
+                    fetch(`/api/status/${documentId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            updateProgress(data.status);
+                            updateProcessingStats(data.events);
+                        });
+                }
+            };
+            
+            eventSource.onerror = function() {
+                console.log('SSE error, closing connection');
+                eventSource.close();
+            };
+            
+            // Add event to timeline
+            function addEventToTimeline(event) {
+                const eventList = document.getElementById('event-list');
+                
+                // Create event element
+                const eventElement = document.createElement('div');
+                eventElement.classList.add('event-item');
+                
+                // Add specific class based on event type
+                if (event.type === 'processing_error') {
+                    eventElement.classList.add('error');
+                } else if (event.type === 'storage_completed') {
+                    eventElement.classList.add('completed');
+                }
+                
+                // Format event display name
+                let eventName = event.type.replace(/_/g, ' ');
+                eventName = eventName.charAt(0).toUpperCase() + eventName.slice(1);
+                
+                // Format timestamp
+                const timestamp = formatDate(event.timestamp);
+                
+                // Build event content
+                let eventContent = `
+                    <div class="d-flex justify-content-between">
+                        <h6>${eventName}</h6>
+                        <small class="text-muted">${timestamp}</small>
+                    </div>
+                `;
+                
+                // Add event-specific details
+                switch(event.type) {
+                    case 'document_uploaded':
+                        eventContent += `<p>File: ${event.data.filename}, Size: ${formatFileSize(event.data.file_size)}</p>`;
+                        break;
+                    case 'document_chunked':
+                        eventContent += `<p>Document chunked into ${event.data.chunk_count} chunks</p>`;
+                        break;
+                    case 'embeddings_generated':
+                        eventContent += `<p>Generated ${event.data.embedding_count} embeddings</p>`;
+                        break;
+                    case 'storage_completed':
+                        eventContent += `<p>Successfully stored ${event.data.metadata.chunk_count} chunks in both databases</p>`;
+                        break;
+                    case 'processing_error':
+                        eventContent += `<p class="text-danger">Error: ${event.data.error}</p>`;
+                        break;
+                }
+                
+                eventElement.innerHTML = eventContent;
+                
+                // Add event to list (at the beginning)
+                if (eventList.children.length && eventList.children[0].classList.contains('text-center')) {
+                    // Remove the loading spinner
+                    eventList.innerHTML = '';
+                }
+                
+                eventList.insertBefore(eventElement, eventList.firstChild);
+            }
+            
+            // Update processing statistics
+            function updateProcessingStats(events) {
+                // Check if we have completed or error
+                const completedEvent = events.find(e => e.type === 'storage_completed');
+                const errorEvent = events.find(e => e.type === 'processing_error');
+                const chunkedEvent = events.find(e => e.type === 'document_chunked');
+                const embeddingsEvent = events.find(e => e.type === 'embeddings_generated');
+                const uploadEvent = events.find(e => e.type === 'document_uploaded');
+                
+                if (completedEvent || errorEvent) {
+                    // Show the stats section
+                    document.getElementById('processing-stats').style.display = 'flex';
+                    
+                    // Update chunk count
+                    if (chunkedEvent) {
+                        document.getElementById('chunk-count').textContent = chunkedEvent.data.chunk_count;
+                    }
+                    
+                    // Update embedding count
+                    if (embeddingsEvent) {
+                        document.getElementById('embedding-count').textContent = embeddingsEvent.data.embedding_count;
+                    }
+                    
+                    // Update status
+                    document.getElementById('status-text').textContent = errorEvent ? 'Error' : 'Completed';
+                    document.getElementById('status-text').className = errorEvent ? 'text-danger' : 'text-success';
+                    
+                    // Calculate processing time if we have both upload and completion events
+                    if (uploadEvent && (completedEvent || errorEvent)) {
+                        const uploadTime = new Date(uploadEvent.data.uploaded_at);
+                        const completeTime = new Date(completedEvent ? completedEvent.data.timestamp : errorEvent.data.timestamp);
+                        const diffSeconds = Math.round((completeTime - uploadTime) / 1000);
+                        
+                        if (diffSeconds < 60) {
+                            document.getElementById('processing-time').textContent = diffSeconds + ' seconds';
+                        } else {
+                            const minutes = Math.floor(diffSeconds / 60);
+                            const seconds = diffSeconds % 60;
+                            document.getElementById('processing-time').textContent = `${minutes} min, ${seconds} sec`;
+                        }
+                    }
+                }
+            }
+            
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', function() {
+                if (eventSource) {
+                    eventSource.close();
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
