@@ -96,7 +96,7 @@ docker-compose down
    python run.py
    ```
 
-2. Open your web browser and navigate to `http://127.0.0.1:5000`
+2. Open your web browser and navigate to `http://127.0.0.1:5001`
 
 3. Upload a markdown file and watch it being processed in real-time
 
